@@ -11,7 +11,6 @@ import functools
 import builtins
 import math
 import random
-import logging
 import ast
 import types
 import unicodedata
@@ -39,9 +38,8 @@ import Orange
 from Orange.preprocess.transformation import MappingTransform
 from Orange.util import frompyfunc
 from Orange.data import Variable, Table, Value, Instance
-from Orange.data.util import get_unique_names
 from Orange.widgets import gui
-from Orange.widgets.settings import ContextSetting, DomainContextHandler
+from Orange.widgets.settings import Setting, DomainContextHandler
 from Orange.widgets.utils import (
     itemmodels, vartype, ftry, unique_everseen as unique
 )
@@ -449,8 +447,6 @@ def freevars(exp: ast.AST, env: List[str]):
     elif etype == ast.Starred:
         # a 'starred' call parameter (e.g. a and b in `f(x, *a, *b)`
         return freevars(exp.value, env)
-    elif etype in [ast.Num, ast.Str, ast.Ellipsis, ast.Bytes, ast.NameConstant]:
-        return []
     elif etype == ast.Constant:
         return []
     elif etype == ast.Attribute:
@@ -467,45 +463,35 @@ def freevars(exp: ast.AST, env: List[str]):
         return sum((freevars(e, env)
                     for e in filter(None, [exp.lower, exp.upper, exp.step])),
                    [])
-    elif etype == ast.ExtSlice:
-        return sum((freevars(e, env) for e in exp.dims), [])
-    elif etype == ast.Index:
-        return freevars(exp.value, env)
     elif etype == ast.keyword:
         return freevars(exp.value, env)
     else:
         raise ValueError(exp)
 
 
-class FeatureConstructorHandler(DomainContextHandler):
-    """Context handler that filters descriptors"""
+class _FeatureConstructorHandler(DomainContextHandler):
+    """ContextHandler for backwards compatibility only.
+    This widget used to have context dependent settings. This ensures the
+    last stored context is propagated to regular settings instead.
+    """
+    MAX_SAVED_CONTEXTS = 1
 
-    def is_valid_item(self, setting, item, attrs, metas):
-        """Check if descriptor `item` can be used with given domain.
-
-        Return True if descriptor's expression contains only
-        available variables and descriptors name does not clash with
-        existing variables.
-        """
-        if item.name in attrs or item.name in metas:
-            return False
-
-        try:
-            exp_ast = ast.parse(item.expression, mode="eval")
-        # ast.parse can return arbitrary errors, not only SyntaxError
-        # pylint: disable=broad-except
-        except Exception:
-            return False
-
-        available = dict(globals()["__GLOBALS"])
-        for var in attrs:
-            available[sanitized_name(var)] = None
-        for var in metas:
-            available[sanitized_name(var)] = None
-
-        if freevars(exp_ast, list(available)):
-            return False
-        return True
+    def initialize(self, instance, data=None):
+        super().initialize(instance, data)
+        if instance.context_settings:
+            # Use the very last context
+            ctx = instance.context_settings[0]
+            def pick_first(item):
+                # Return first element of item if item is a tuple
+                if isinstance(item, tuple):
+                    return item[0]
+                else:
+                    return item
+            instance.descriptors = ctx.values.get("descriptors", [])
+            instance.expressions_with_values = pick_first(
+                ctx.values.get("expressions_with_values", False)
+            )
+            instance.currentIndex = pick_first(ctx.values.get("currentIndex", -1))
 
 
 class OWFeatureConstructor(OWWidget, ConcurrentWidgetMixin):
@@ -525,11 +511,13 @@ class OWFeatureConstructor(OWWidget, ConcurrentWidgetMixin):
 
     want_main_area = False
 
-    settingsHandler = FeatureConstructorHandler()
-    descriptors = ContextSetting([])
-    currentIndex = ContextSetting(-1)
-    expressions_with_values = ContextSetting(False)
-    settings_version = 3
+    # NOTE: The context handler is here for settings migration only.
+    settingsHandler = _FeatureConstructorHandler()
+    descriptors = Setting([], schema_only=True)
+    expressions_with_values = Setting(False, schema_only=True)
+    currentIndex = Setting(-1, schema_only=True)
+
+    settings_version = 4
 
     EDITORS = [
         (ContinuousDescriptor, ContinuousFeatureEditor),
@@ -543,9 +531,11 @@ class OWFeatureConstructor(OWWidget, ConcurrentWidgetMixin):
         invalid_expressions = Msg("Invalid expressions: {}.")
         transform_error = Msg("{}")
 
-    class Warning(OWWidget.Warning):
-        renamed_var = Msg("Recently added variable has been renamed, "
-                          "to avoid duplicates.\n")
+    class Information(OWWidget.Information):
+        replaces_existing = Msg(
+            "A new variable that is named the same as an existing one will "
+            "replace it on the output."
+        )
 
     def __init__(self):
         super().__init__()
@@ -581,12 +571,15 @@ class OWFeatureConstructor(OWWidget, ConcurrentWidgetMixin):
             shortcut=QKeySequence.New
         )
 
+        def reserved_names():
+            return set(desc.name for desc in self.featuremodel)
+
         def unique_name(fmt, reserved):
             candidates = (fmt.format(i) for i in count(1))
             return next(c for c in candidates if c not in reserved)
 
         def generate_newname(fmt):
-            return unique_name(fmt, self.reserved_names())
+            return unique_name(fmt, reserved_names())
 
         menu = QMenu(self.addbutton)
         cont = menu.addAction("Numeric")
@@ -656,6 +649,9 @@ class OWFeatureConstructor(OWWidget, ConcurrentWidgetMixin):
         self.fix_button.setHidden(True)
         gui.button(self.buttonsArea, self, "Send", callback=self.apply, default=True)
 
+        if self.descriptors:
+            self.featuremodel[:] = list(self.descriptors)
+
     def setCurrentIndex(self, index):
         index = min(index, len(self.featuremodel) - 1)
         self.currentIndex = index
@@ -678,19 +674,17 @@ class OWFeatureConstructor(OWWidget, ConcurrentWidgetMixin):
 
     def _on_modified(self):
         if self.currentIndex >= 0:
-            self.Warning.clear()
+            self.Information.clear()
             editor = self.editorstack.currentWidget()
-            proposed = editor.editorData().name
-            uniq = get_unique_names(self.reserved_names(self.currentIndex),
-                                    proposed)
-
-            feature = editor.editorData()
-            if editor.editorData().name != uniq:
-                self.Warning.renamed_var()
-                feature = feature.__class__(uniq, *feature[1:])
-
-            self.featuremodel[self.currentIndex] = feature
+            self.featuremodel[self.currentIndex] = editor.editorData()
             self.descriptors = list(self.featuremodel)
+            editor_names = [v.name for v in self.descriptors]
+            if self.data is not None:
+                exist_names = [v.name for v in self.data.domain]
+            else:
+                exist_names = []
+            if set(editor_names).intersection(exist_names):
+                self.Information.replaces_existing()
 
     def setDescriptors(self, descriptors):
         """
@@ -699,37 +693,13 @@ class OWFeatureConstructor(OWWidget, ConcurrentWidgetMixin):
         self.descriptors = descriptors
         self.featuremodel[:] = list(self.descriptors)
 
-    def reserved_names(self, idx_=None):
-        varnames = []
-        if self.data is not None:
-            varnames = [var.name for var in
-                        self.data.domain.variables + self.data.domain.metas]
-        varnames += [desc.name for idx, desc in enumerate(self.featuremodel)
-                     if idx != idx_]
-        return set(varnames)
-
     @Inputs.data
     @check_sql_input
     def setData(self, data=None):
         """Set the input dataset."""
-        self.closeContext()
-
         self.data = data
-        self.expressions_with_values = False
+        self.setCurrentIndex(self.currentIndex) # Update editor
 
-        self.descriptors = []
-        self.currentIndex = -1
-        if self.data is not None:
-            self.openContext(data)
-
-        # disconnect from the selection model while reseting the model
-        selmodel = self.featureview.selectionModel()
-        selmodel.selectionChanged.disconnect(self._on_selectedVariableChanged)
-
-        self.featuremodel[:] = list(self.descriptors)
-        self.setCurrentIndex(self.currentIndex)
-
-        selmodel.selectionChanged.connect(self._on_selectedVariableChanged)
         self.fix_button.setHidden(not self.expressions_with_values)
         self.editorstack.setEnabled(self.currentIndex >= 0)
 
@@ -816,7 +786,7 @@ class OWFeatureConstructor(OWWidget, ConcurrentWidgetMixin):
         self.start(run, self.data, desc, self.expressions_with_values)
 
     def on_done(self, result: "Result") -> None:
-        data, attrs = result.data, result.attributes
+        data, attrs = result.data, result.new_variables
         disc_attrs_not_ok = self.check_attrs_values(
             [var for var in attrs if var.is_discrete], data)
         if disc_attrs_not_ok:
@@ -826,12 +796,11 @@ class OWFeatureConstructor(OWWidget, ConcurrentWidgetMixin):
         self.Outputs.data.send(data)
 
     def on_exception(self, ex: Exception):
-        log = logging.getLogger(__name__)
-        log.error("", exc_info=ex)
         self.Error.transform_error(
             "".join(format_exception_only(type(ex), ex)).rstrip(),
             exc_info=ex
         )
+        self.Outputs.data.send(None)
 
     def on_partial_result(self, _):
         pass
@@ -916,23 +885,56 @@ class OWFeatureConstructor(OWWidget, ConcurrentWidgetMixin):
 @dataclass
 class Result:
     data: Table
-    attributes: List[Variable]
-    metas: List[Variable]
+    new_variables: List[Variable]
 
 
 def run(data: Table, desc, use_values, task: TaskState) -> Result:
     if task.is_interruption_requested():
         raise CancelledError  # pragma: no cover
-    new_variables, new_metas = construct_variables(desc, data, use_values)
+    new_variables = construct_variables(desc, data, use_values)
     # Explicit cancellation point after `construct_variables` which can
     # already run `compute_value`.
     if task.is_interruption_requested():
         raise CancelledError  # pragma: no cover
-    new_domain = Orange.data.Domain(
-        data.domain.attributes + new_variables,
-        data.domain.class_vars,
-        metas=data.domain.metas + new_metas
-    )
+    attrs, class_vars, metas = [], [], []
+    metas_new = []
+    new_vars = {v.name: (d, v) for d, v in zip(desc, new_variables)}
+
+    def append_replace_move(vars_: List[Variable], var: Variable, moving=True):
+        """
+        Append, replace or move to metas the `var` to `vars_` list
+        depending on if an entry exist in the `new_vars` (note: `new_vars` is
+        modified in place). If `moving` is `False` move to metas is not
+        allowed i.e. we are processing metas themselves.
+        """
+        new = new_vars.get(var.name, None)
+        if new is not None:  # replacing an existing variable
+            d, new_var = new
+            if d.meta and moving:  # moving to meta
+                metas_new.append(new_var)
+            else:
+                vars_.append(new_var)
+            new_vars.pop(var.name)
+        else:
+            vars_.append(var)
+
+    for var in data.domain.attributes:
+        append_replace_move(attrs, var)
+
+    for var in data.domain.class_vars:
+        append_replace_move(class_vars, var)
+
+    for var in data.domain.metas:
+        append_replace_move(metas, var, moving=False)
+
+    # existing names that were moved to metas will precede new named vars.
+    metas.extend(metas_new)
+    # remaining `new_vars` entries are new; append to corresponding variables
+    # list
+    attrs.extend(v for d, v in new_vars.values() if not d.meta)
+    metas.extend(v for d, v in new_vars.values() if d.meta)
+
+    new_domain = Orange.data.Domain(attrs, class_vars, metas)
     try:
         for variable in new_variables:
             variable.compute_value.mask_exceptions = False
@@ -940,7 +942,7 @@ def run(data: Table, desc, use_values, task: TaskState) -> Result:
     finally:
         for variable in new_variables:
             variable.compute_value.mask_exceptions = True
-    return Result(data, new_variables, new_metas)
+    return Result(data, list(new_variables))
 
 
 def validate_exp(exp):
@@ -988,8 +990,6 @@ def validate_exp(exp):
         return all(map(validate_exp, subexp))
     elif etype == ast.Starred:
         return validate_exp(exp.value)
-    elif etype in [ast.Num, ast.Str, ast.Bytes, ast.Ellipsis, ast.NameConstant]:
-        return True
     elif etype == ast.Constant:
         return True
     elif etype == ast.Attribute:
@@ -1017,15 +1017,13 @@ def validate_exp(exp):
 
 
 def construct_variables(descriptions, data, use_values=False):
-    # subs
-    variables = []
-    metas = []
+    variables: List[Variable] = []
     source_vars = data.domain.variables + data.domain.metas
     for desc in descriptions:
         desc, func = bind_variable(desc, source_vars, data, use_values)
         var = make_variable(desc, func)
-        [variables, metas][desc.meta].append(var)
-    return tuple(variables), tuple(metas)
+        variables.append(var)
+    return tuple(variables)
 
 
 def sanitized_name(name):

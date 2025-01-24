@@ -15,16 +15,14 @@ from orangewidget.settings import Context
 from Orange.data import (Table, Domain, StringVariable,
                          ContinuousVariable, DiscreteVariable, TimeVariable)
 from Orange.widgets.tests.base import WidgetTest
-from Orange.widgets.utils import vartype
 from Orange.widgets.utils.itemmodels import PyListModel
+from Orange.widgets.utils.concurrent import TaskState
 from Orange.widgets.data.owfeatureconstructor import (
     DiscreteDescriptor, ContinuousDescriptor, StringDescriptor,
     construct_variables, OWFeatureConstructor,
-    FeatureEditor, DiscreteFeatureEditor, FeatureConstructorHandler,
-    DateTimeDescriptor, StringFeatureEditor)
-
-from Orange.widgets.data.owfeatureconstructor import (
-    freevars, validate_exp, FeatureFunc
+    FeatureEditor, DiscreteFeatureEditor,
+    DateTimeDescriptor, StringFeatureEditor, freevars, validate_exp,
+    FeatureFunc, run
 )
 
 
@@ -40,7 +38,7 @@ class FeatureConstructorTest(unittest.TestCase):
                                 values=values, ordered=True)]
         )
         data = data.transform(Domain(data.domain.attributes +
-                                     construct_variables(desc, data)[0],
+                                     construct_variables(desc, data),
                                      data.domain.class_vars,
                                      data.domain.metas))
         self.assertTrue(isinstance(data.domain[name], DiscreteVariable))
@@ -58,7 +56,7 @@ class FeatureConstructorTest(unittest.TestCase):
                                 values=values, ordered=False)]
         )
         data = data.transform(Domain(data.domain.attributes +
-                                     construct_variables(desc, data)[0],
+                                     construct_variables(desc, data),
                                      data.domain.class_vars,
                                      data.domain.metas))
         newvar = data.domain[name]
@@ -77,7 +75,7 @@ class FeatureConstructorTest(unittest.TestCase):
                                   number_of_decimals=2)]
         )
         data = data.transform(Domain(data.domain.attributes +
-                                     construct_variables(featuremodel, data)[0],
+                                     construct_variables(featuremodel, data),
                                      data.domain.class_vars,
                                      data.domain.metas))
         self.assertTrue(isinstance(data.domain[name], ContinuousVariable))
@@ -93,7 +91,7 @@ class FeatureConstructorTest(unittest.TestCase):
             [DateTimeDescriptor(name=name, expression=expression)]
         )
         data = data.transform(Domain(data.domain.attributes +
-                                     construct_variables(featuremodel, data)[0],
+                                     construct_variables(featuremodel, data),
                                      data.domain.class_vars,
                                      data.domain.metas))
         self.assertTrue(isinstance(data.domain[name], TimeVariable))
@@ -111,7 +109,7 @@ class FeatureConstructorTest(unittest.TestCase):
         data = data.transform(Domain(data.domain.attributes,
                                      data.domain.class_vars,
                                      data.domain.metas +
-                                     construct_variables(desc, data)[1]))
+                                     construct_variables(desc, data)))
         self.assertTrue(isinstance(data.domain[name], StringVariable))
         for i in range(3):
             self.assertEqual(data[i * 50, name],
@@ -129,7 +127,7 @@ class FeatureConstructorTest(unittest.TestCase):
                                   meta=False,
                                   number_of_decimals=3)]
         )
-        nv, _ = construct_variables(desc, data)
+        nv = construct_variables(desc, data)
         ndata = data.transform(Domain(nv))
         np.testing.assert_array_equal(ndata.X[:, 0],
                                       data.X[:, :2].sum(axis=1))
@@ -137,13 +135,17 @@ class FeatureConstructorTest(unittest.TestCase):
     def test_construct_placement(self):
         domain = Domain([ContinuousVariable(x) for x in "ab"])
         data = Table.from_numpy(domain, np.arange(4).reshape(2, 2))
-        desc = PyListModel(
-            [ContinuousDescriptor("x", "a + b", 1, False),
-             ContinuousDescriptor("y", "a + b", 1, True),
-             StringDescriptor("z", "a + b", True)])
-        attrs, metas = construct_variables(desc, data)
-        self.assertEqual([var.name for var in attrs], ["x"])
-        self.assertEqual([var.name for var in metas], ["y", "z"])
+        desc = [ContinuousDescriptor("x", "a + b", 1, False),
+                ContinuousDescriptor("y", "a + b", 1, True),
+                StringDescriptor("z", "a + b", True),
+                ContinuousDescriptor("a", "a + 1", 1, False),
+                ContinuousDescriptor("b", "a + 1", 1, True),
+                ]
+        res = run(data, desc, False, TaskState())
+        self.assertEqual([var.name for var in res.data.domain.attributes],
+                         ["a", "x"])
+        self.assertEqual([var.name for var in res.data.domain.metas],
+                         ["b", "y", "z"])
 
     @staticmethod
     def test_unicode_normalization():
@@ -158,7 +160,7 @@ class FeatureConstructorTest(unittest.TestCase):
         data = Table.from_numpy(domain, np.arange(5).reshape(5, 1))
         data = data.transform(Domain(data.domain.attributes,
                                      [],
-                                     construct_variables(desc, data)[0]))
+                                     construct_variables(desc, data)))
         np.testing.assert_equal(data.X, data.metas)
 
     @staticmethod
@@ -171,7 +173,7 @@ class FeatureConstructorTest(unittest.TestCase):
         data = Table.from_numpy(domain, X)
         data_ = data.transform(Domain(data.domain.attributes,
                                       [],
-                                      construct_variables(desc, data)[0]))
+                                      construct_variables(desc, data)))
         np.testing.assert_equal(data.get_column(0), data_.get_column(0)
         )
 
@@ -201,13 +203,15 @@ class TestTools(unittest.TestCase):
         self.assertEqual(freevars_("a + b", ["a", "b"]), [])
         self.assertEqual(freevars_("a[b]"), ["a", "b"])
         self.assertEqual(freevars_("a[b]", ["a", "b"]), [])
+        self.assertEqual(freevars_("a[b:3]", ["a", "b"]), [])
+        self.assertEqual(freevars_("a[b:c:d]", ["a", "b", "c", "d"]), [])
+
         self.assertEqual(freevars_("f(x, *a)", ["f"]), ["x", "a"])
         self.assertEqual(freevars_("f(x, *a, y=1)", ["f"]), ["x", "a"])
         self.assertEqual(freevars_("f(x, *a, y=1, **k)", ["f"]),
                          ["x", "a", "k"])
-        if sys.version_info >= (3, 5):
-            self.assertEqual(freevars_("f(*a, *b, k=c, **d, **e)", ["f"]),
-                             ["a", "b", "c", "d", "e"])
+        self.assertEqual(freevars_("f(*a, *b, k=c, **d, **e)", ["f"]),
+                         ["a", "b", "c", "d", "e"])
 
         self.assertEqual(freevars_("True"), [])
         self.assertEqual(freevars_("'True'"), [])
@@ -409,7 +413,7 @@ class OWFeatureConstructorTests(WidgetTest):
         self.wait_until_finished(self.widget)
         self.assertFalse(self.widget.Error.transform_error.is_shown())
 
-    def test_renaming_duplicate_vars(self):
+    def test_replace_existing_vars(self):
         data = Table("iris")
         self.widget.setData(data)
         self.widget.addFeature(
@@ -417,8 +421,11 @@ class OWFeatureConstructorTests(WidgetTest):
         )
         self.widget.apply()
         output = self.get_output(self.widget.Outputs.data)
-        self.assertEqual(len(set(var.name for var in output.domain.variables)),
-                         len(output.domain.variables))
+        domain = output.domain
+        self.assertEqual(len(domain.attributes), 4)
+        self.assertEqual(len(domain.class_vars), 1)
+        self.assertIsInstance(domain.class_vars[0], ContinuousVariable)
+        self.assertEqual(domain.class_vars[0].name, "iris")
 
     def test_discrete_no_values(self):
         """
@@ -542,26 +549,41 @@ class OWFeatureConstructorTests(WidgetTest):
         self.assertTrue(widget.expressions_with_values)
         self.assertFalse(widget.fix_button.isHidden())
         self.send_signal(widget.Inputs.data, None)
-        self.assertFalse(widget.expressions_with_values)
         self.assertTrue(widget.fix_button.isHidden())
+        self.send_signal(widget.Inputs.data, data)
+        self.assertFalse(widget.fix_button.isHidden())
 
-    def test_report(self):
+    def test_migration_no_context(self):
+        descriptors = [
+            ContinuousDescriptor("y", "A + B", 1),
+            StringDescriptor("u", "str(A) + 'X'")
+        ]
         settings = {
             "context_settings":
                 [Context(
-                    attributes=dict(x=2, y=2, z=2), metas={},
+                    attributes=dict(A=1, B=2), metas={},
                     values=dict(
-                        descriptors=[
-                            ContinuousDescriptor("a", "x + 2", 1),
-                            DiscreteDescriptor("b", "x < 3", (), False),
-                            DiscreteDescriptor("c", "x > 15", (), True),
-                            DiscreteDescriptor("d", "y > x", ("foo", "bar"), False),
-                            DiscreteDescriptor("e", "x ** 2 + y == 5", ("foo", "bar"), True),
-                            StringDescriptor("f", "str(x)"),
-                            DateTimeDescriptor("g", "z")
-                        ],
-                        currentIndex=0)
+                        descriptors=descriptors,
+                        currentIndex=1)
                 )]
+        }
+        w = self.create_widget(OWFeatureConstructor, settings)
+        self.assertEqual(w.descriptors, descriptors)
+        self.assertEqual(w.currentIndex, 1)
+        self.assertEqual(w.expressions_with_values, True)
+
+    def test_report(self):
+        settings = {
+            "descriptors": [
+                ContinuousDescriptor("a", "x + 2", 1),
+                DiscreteDescriptor("b", "x < 3", (), False),
+                DiscreteDescriptor("c", "x > 15", (), True),
+                DiscreteDescriptor("d", "y > x", ("foo", "bar"), False),
+                DiscreteDescriptor("e", "x ** 2 + y == 5", ("foo", "bar"), True),
+                StringDescriptor("f", "str(x)"),
+                DateTimeDescriptor("g", "z")
+            ],
+            "currentIndex": 0
         }
 
         w = self.create_widget(OWFeatureConstructor, settings)
@@ -603,47 +625,6 @@ class TestFeatureEditor(unittest.TestCase):
         self.assertIs(FeatureEditor.FUNCTIONS["abs"], abs)
         self.assertIs(FeatureEditor.FUNCTIONS["sqrt"], math.sqrt)
 
-
-class FeatureConstructorHandlerTests(unittest.TestCase):
-    def test_handles_builtins_in_expression(self):
-        self.assertTrue(
-            FeatureConstructorHandler().is_valid_item(
-                OWFeatureConstructor.descriptors,
-                StringDescriptor("X", "str(A) + str(B)"),
-                {"A": vartype(DiscreteVariable)},
-                {"B": vartype(DiscreteVariable)}
-            )
-        )
-
-        # no variables is also ok
-        self.assertTrue(
-            FeatureConstructorHandler().is_valid_item(
-                OWFeatureConstructor.descriptors,
-                StringDescriptor("X", "str('foo')"),
-                {},
-                {}
-            )
-        )
-
-        # should fail on unknown variables
-        self.assertFalse(
-            FeatureConstructorHandler().is_valid_item(
-                OWFeatureConstructor.descriptors,
-                StringDescriptor("X", "str(X)"),
-                {},
-                {}
-            )
-        )
-
-    def test_handles_special_characters_in_var_names(self):
-        self.assertTrue(
-            FeatureConstructorHandler().is_valid_item(
-                OWFeatureConstructor.descriptors,
-                StringDescriptor("X", "A_2_f"),
-                {"A.2 f": vartype(DiscreteVariable)},
-                {}
-            )
-        )
 
 
 if __name__ == "__main__":

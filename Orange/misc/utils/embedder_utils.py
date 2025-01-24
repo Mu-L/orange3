@@ -38,21 +38,37 @@ class EmbedderCache:
 
     def _init_cache(self):
         if isfile(self._cache_file_path):
-            try:
-                return self.load_pickle(self._cache_file_path)
-            except EOFError:
-                return {}
+            return self.load_pickle(self._cache_file_path)
         return {}
 
     @staticmethod
     def save_pickle(obj, file_name):
-        with open(file_name, 'wb') as f:
-            pickle.dump(obj, f)
+        try:
+            with open(file_name, 'wb') as f:
+                pickle.dump(obj, f)
+        except PermissionError as ex:
+            # skip saving cache if no right permissions
+            log.warning(
+                "Can't save embedding to %s due to %s.",
+                file_name,
+                type(ex).__name__,
+                exc_info=True,
+            )
 
     @staticmethod
     def load_pickle(file_name):
-        with open(file_name, 'rb') as f:
-            return pickle.load(f)
+        try:
+            with open(file_name, 'rb') as f:
+                return pickle.load(f)
+        except (EOFError, PermissionError) as ex:
+            # load empty cache if no permission or EOF error
+            log.warning(
+                "Can't load embedding from %s due to %s.",
+                file_name,
+                type(ex).__name__,
+                exc_info=True,
+            )
+            return {}
 
     @staticmethod
     def md5_hash(bytes_):

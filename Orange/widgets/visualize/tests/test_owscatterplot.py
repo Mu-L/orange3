@@ -7,6 +7,7 @@ import numpy as np
 from AnyQt.QtCore import QRectF, Qt
 from AnyQt.QtWidgets import QToolTip
 from AnyQt.QtGui import QColor, QFont
+
 from orangewidget.tests.base import DEFAULT_TIMEOUT
 
 from Orange.data import (
@@ -75,9 +76,8 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
                         DiscreteVariable("e", values="ab"))
         a = np.arange(10).reshape((10, 1))
         data = Table(domain, np.hstack([a, a, a, a]), a >= 5)
-        self.send_signal(self.widget.Inputs.data, data)
-        vizrank = ScatterPlotVizRank(self.widget)
-        self.assertEqual([x.name for x in vizrank.score_heuristic()],
+        vizrank = ScatterPlotVizRank(self.widget, data, attr_color=data.domain.class_var)
+        self.assertEqual([x.name for x in vizrank.score_attributes()],
                          list("abcd"))
 
     def test_optional_combos(self):
@@ -151,6 +151,17 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         self.widget.cb_attr_y.setCurrentIndex(4)
         self.assertFalse(self.widget.cb_reg_line.isEnabled())
         self.assertListEqual([], self.widget.graph.reg_line_items)
+
+    def test_ellipse_pair(self):
+        self.send_signal(self.widget.Inputs.data, self.data)
+        self.assertTrue(self.widget.graph.controls.show_ellipse.isEnabled())
+        self.assertListEqual([], self.widget.graph.ellipse_items)
+        self.widget.graph.controls.show_ellipse.setChecked(True)
+        self.assertEqual(4, len(self.widget.graph.ellipse_items))
+        self.widget.cb_attr_y.activated.emit(4)
+        self.widget.cb_attr_y.setCurrentIndex(4)
+        self.assertFalse(self.widget.graph.controls.show_ellipse.isEnabled())
+        self.assertListEqual([], self.widget.graph.ellipse_items)
 
     def test_points_combo_boxes(self):
         """Check Point box combo models and values"""
@@ -334,7 +345,7 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         self.assertIs(self.widget.attr_x, self.data.domain[2])
         self.assertIs(self.widget.attr_y, self.data.domain[3])
         self.assertFalse(self.widget.attr_box.isEnabled())
-        self.assertFalse(self.widget.vizrank.isEnabled())
+        self.assertFalse(self.widget.vizrank_button().isEnabled())
         x, y = self.widget.graph.scatterplot_item.getData()
         np.testing.assert_array_equal(x, self.data.X[:, 2])
         np.testing.assert_array_equal(y, self.data.X[:, 3])
@@ -344,11 +355,11 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         self.assertIs(self.widget.attr_x, self.data.domain[2])
         self.assertIs(self.widget.attr_y, self.data.domain[3])
         self.assertFalse(self.widget.attr_box.isEnabled())
-        self.assertFalse(self.widget.vizrank.isEnabled())
+        self.assertFalse(self.widget.vizrank_button().isEnabled())
 
         self.send_signal(self.widget.Inputs.features, None)
         self.assertTrue(self.widget.attr_box.isEnabled())
-        self.assertTrue(self.widget.vizrank.isEnabled())
+        self.assertTrue(self.widget.vizrank_button().isEnabled())
 
     def test_features_and_hidden_data(self):
         new_domain = self.data.domain.copy()
@@ -360,13 +371,13 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         self.assertIsNone(self.widget.attr_x)
         self.assertIsNone(self.widget.attr_y)
         self.assertFalse(self.widget.attr_box.isEnabled())
-        self.assertFalse(self.widget.vizrank.isEnabled())
+        self.assertFalse(self.widget.vizrank_button().isEnabled())
 
         self.send_signal(self.widget.Inputs.features, None)
         self.assertEqual(self.widget.attr_x, self.data.domain[1])
         self.assertEqual(self.widget.attr_y, self.data.domain[2])
         self.assertTrue(self.widget.attr_box.isEnabled())
-        self.assertTrue(self.widget.vizrank.isEnabled())
+        self.assertTrue(self.widget.vizrank_button().isEnabled())
 
         # try with features not in data
         bad_feat = AttributeList([ContinuousVariable("a"), ContinuousVariable("b")])
@@ -374,13 +385,13 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         self.assertIsNone(self.widget.attr_x)
         self.assertIsNone(self.widget.attr_y)
         self.assertFalse(self.widget.attr_box.isEnabled())
-        self.assertFalse(self.widget.vizrank.isEnabled())
+        self.assertFalse(self.widget.vizrank_button().isEnabled())
 
         self.send_signal(self.widget.Inputs.features, None)
         self.assertEqual(self.widget.attr_x, self.data.domain[1])
         self.assertEqual(self.widget.attr_y, self.data.domain[2])
         self.assertTrue(self.widget.attr_box.isEnabled())
-        self.assertTrue(self.widget.vizrank.isEnabled())
+        self.assertTrue(self.widget.vizrank_button().isEnabled())
 
     def test_output_features(self):
         data = Table("iris")
@@ -401,20 +412,17 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
     def test_vizrank(self):
         data = Table("iris")
         self.send_signal(self.widget.Inputs.data, data)
-        vizrank = ScatterPlotVizRank(self.widget)
+        vizrank = self.widget.vizrank_dialog
         n_states = len(data.domain.attributes)
         n_states = n_states * (n_states - 1) / 2
-        states = list(vizrank.iterate_states(None))
+        states = list(vizrank.state_generator())
         self.assertEqual(len(states), n_states)
         self.assertEqual(len(set(states)), n_states)
         self.assertIsNotNone(vizrank.compute_score(states[0]))
-        self.send_signal(self.widget.Inputs.data, data[:9])
-        self.assertIsNone(vizrank.compute_score(states[0]))
 
-        data = Table("housing")[::10]
-        self.send_signal(self.widget.Inputs.data, data)
-        vizrank = ScatterPlotVizRank(self.widget)
-        self.assertIsNotNone(vizrank.compute_score(next(vizrank.iterate_states(None))))
+        self.send_signal(self.widget.Inputs.data, data[:9])
+        vizrank = self.widget.vizrank_dialog
+        self.assertIsNone(vizrank.compute_score(states[0]))
 
     def test_vizrank_class_nan(self):
         """
@@ -424,7 +432,7 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         """
         def assert_vizrank_enabled(data, is_enabled):
             self.send_signal(self.widget.Inputs.data, data)
-            self.assertEqual(is_enabled, self.widget.vizrank_button.isEnabled())
+            self.assertEqual(is_enabled, self.widget.vizrank_button().isEnabled())
 
         data1 = Table("iris")[::30]
         data2 = Table("iris")[::30].copy()
@@ -447,24 +455,23 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         self.send_signal(self.widget.Inputs.data, data)
         with patch("Orange.widgets.visualize.owscatterplot.ReliefF",
                    new=lambda *_1, **_2: lambda data: np.arange(len(data))):
-            self.widget.vizrank.score_heuristic()
+            self.widget.vizrank_button().click()
 
     def test_vizrank_enabled(self):
         self.send_signal(self.widget.Inputs.data, self.data)
-        self.assertTrue(self.widget.vizrank_button.isEnabled())
-        self.assertEqual(self.widget.vizrank_button.toolTip(), "")
-        self.assertTrue(self.widget.vizrank.button.isEnabled())
-        self.widget.vizrank.button.click()
+        self.assertTrue(self.widget.vizrank_button().isEnabled())
+        self.assertEqual(self.widget.vizrank_button().toolTip(), "")
+        self.assertTrue(self.widget.vizrank_button().isEnabled())
 
     def test_vizrank_enabled_no_data(self):
         self.send_signal(self.widget.Inputs.data, None)
-        self.assertFalse(self.widget.vizrank_button.isEnabled())
-        self.assertEqual(self.widget.vizrank_button.toolTip(), "No data on input")
+        self.assertFalse(self.widget.vizrank_button().isEnabled())
+        self.assertEqual(self.widget.vizrank_button().toolTip(), "No data on input")
 
     def test_vizrank_enabled_sparse_data(self):
         self.send_signal(self.widget.Inputs.data, self.data.to_sparse())
-        self.assertFalse(self.widget.vizrank_button.isEnabled())
-        self.assertEqual(self.widget.vizrank_button.toolTip(), "Data is sparse")
+        self.assertFalse(self.widget.vizrank_button().isEnabled())
+        self.assertEqual(self.widget.vizrank_button().toolTip(), "Data is sparse")
 
     def test_vizrank_enabled_constant_data(self):
         domain = Domain([ContinuousVariable("c1"),
@@ -475,21 +482,20 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         X = np.zeros((10, 4))
         table = Table(domain, X, np.random.randint(2, size=10))
         self.send_signal(self.widget.Inputs.data, table)
-        self.assertEqual(self.widget.vizrank_button.toolTip(), "")
-        self.assertTrue(self.widget.vizrank_button.isEnabled())
-        self.assertTrue(self.widget.vizrank.button.isEnabled())
-        self.widget.vizrank.button.click()
+        self.assertEqual(self.widget.vizrank_button().toolTip(), "")
+        self.assertTrue(self.widget.vizrank_button().isEnabled())
+        self.assertTrue(self.widget.vizrank_button().isEnabled())
 
     def test_vizrank_enabled_two_features(self):
         self.send_signal(self.widget.Inputs.data, self.data[:, :2])
-        self.assertFalse(self.widget.vizrank_button.isEnabled())
-        self.assertEqual(self.widget.vizrank_button.toolTip(),
+        self.assertFalse(self.widget.vizrank_button().isEnabled())
+        self.assertEqual(self.widget.vizrank_button().toolTip(),
                          "Not enough features for ranking")
 
     def test_vizrank_enabled_no_color_var(self):
         self.send_signal(self.widget.Inputs.data, self.data[:, :3])
-        self.assertFalse(self.widget.vizrank_button.isEnabled())
-        self.assertEqual(self.widget.vizrank_button.toolTip(),
+        self.assertFalse(self.widget.vizrank_button().isEnabled())
+        self.assertEqual(self.widget.vizrank_button().toolTip(),
                          "Color variable is not selected")
 
     def test_vizrank_enabled_color_var_nans(self):
@@ -500,11 +506,12 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
                         DiscreteVariable("cls", values=("a", "b")))
         table = Table(domain, np.random.random((10, 4)), np.full(10, np.nan))
         self.send_signal(self.widget.Inputs.data, table)
-        self.assertFalse(self.widget.vizrank_button.isEnabled())
-        self.assertEqual(self.widget.vizrank_button.toolTip(),
+        self.assertFalse(self.widget.vizrank_button().isEnabled())
+        self.assertEqual(self.widget.vizrank_button().toolTip(),
                          "Color variable has no values")
 
-    def test_vizrank_hidden_attributes(self):
+    @patch.object(OWScatterPlot.__bases__[1], "init_vizrank")
+    def test_vizrank_hidden_attributes(self, init_vizrank):
         """
         Test hidden attributes not considered in Find Informative Projections
         """
@@ -512,11 +519,8 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         new_domain.attributes[0].attributes["hidden"] = True
         data = self.data.transform(new_domain)
         self.send_signal(self.widget.Inputs.data, data)
-        vizrank = ScatterPlotVizRank(self.widget)
-        self.assertListEqual(
-            ["petal width", "petal length", "sepal width"],
-            [x.name for x in vizrank.score_heuristic()],
-        )
+        self.assertEqual(list(init_vizrank.call_args[0][1]),
+                         list(new_domain.variables[1:]))
 
     def test_auto_send_selection(self):
         """
@@ -848,8 +852,8 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         self.assertListEqual(self.widget.effective_variables, list(features))
 
     @patch('Orange.widgets.visualize.owscatterplot.ScatterPlotVizRank.'
-           'on_manual_change')
-    def test_vizrank_receives_manual_change(self, on_manual_change):
+           'auto_select')
+    def test_vizrank_receives_manual_change(self, auto_select):
         # Recreate the widget so the patch kicks in
         self.widget = self.create_widget(OWScatterPlot)
         data = Table("iris.tab")
@@ -859,25 +863,7 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         self.widget.attr_y = model[1]
         simulate.combobox_activate_index(self.widget.controls.attr_x, 2)
         self.assertIs(self.widget.attr_x, model[2])
-        on_manual_change.assert_called_with(model[2], model[1])
-
-    def test_on_manual_change(self):
-        data = Table("iris.tab")
-        self.send_signal(self.widget.Inputs.data, data)
-        vizrank = self.widget.vizrank
-        vizrank.toggle()
-        self.process_events(until=lambda: not vizrank.keep_running)
-
-        model = vizrank.rank_model
-        attrs = model.data(model.index(3, 0), vizrank._AttrRole)
-        vizrank.on_manual_change(*attrs)
-        selection = vizrank.rank_table.selectedIndexes()
-        self.assertEqual(len(selection), 1)
-        self.assertEqual(selection[0].row(), 3)
-
-        vizrank.on_manual_change(*attrs[::-1])
-        selection = vizrank.rank_table.selectedIndexes()
-        self.assertEqual(len(selection), 0)
+        auto_select.assert_called_with([model[2], model[1]])
 
     def test_regression_lines_appear(self):
         self.widget.graph.controls.show_reg_line.setChecked(True)
@@ -892,6 +878,19 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         self.send_signal(self.widget.Inputs.data, data)
         self.assertEqual(len(self.widget.graph.reg_line_items), 0)
 
+    def test_ellipse_appear(self):
+        self.widget.graph.controls.show_ellipse.setChecked(True)
+        self.assertEqual(len(self.widget.graph.ellipse_items), 0)
+        self.send_signal(self.widget.Inputs.data, self.data)
+        self.assertEqual(len(self.widget.graph.ellipse_items), 4)
+        simulate.combobox_activate_index(self.widget.controls.attr_color, 0)
+        self.assertEqual(len(self.widget.graph.ellipse_items), 1)
+        data = self.data.copy()
+        with data.unlocked():
+            data[:, 0] = np.nan
+        self.send_signal(self.widget.Inputs.data, data)
+        self.assertEqual(len(self.widget.graph.ellipse_items), 0)
+
     def test_regression_line_coeffs(self):
         widget = self.widget
         graph = widget.graph
@@ -899,7 +898,7 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
                        [0, 1], [1, 3], [2, 5]], dtype=float)
         colors = np.array([0, 0, 0, 0, 1, 1, 1], dtype=float)
         widget.get_coordinates_data = lambda: xy.T
-        widget.can_draw_regresssion_line = lambda: True
+        widget.can_draw_regression_line = lambda: True
         widget.get_color_data = lambda: colors
         widget.is_continuous_color = lambda: False
         graph.palette = DefaultRGBColors
@@ -933,6 +932,33 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         self.assertEqual(line2.pos().y(), 1)
         self.assertAlmostEqual(line2.angle, np.degrees(np.arctan2(2, 1)))
         self.assertEqual(line2.pen.color().hue(), graph.palette[1].hue())
+
+    def test_ellipse_coeffs(self):
+        widget = self.widget
+        graph = widget.graph
+        xy = np.array([[0, 0], [1, 0], [1, 2], [2, 2],
+                       [0, 1], [1, 3], [2, 5]], dtype=float)
+        colors = np.array([0, 0, 0, 0, 1, 1, 1], dtype=float)
+        widget.get_coordinates_data = lambda: xy.T
+        widget.can_draw_regression_line = lambda: True
+        widget.get_color_data = lambda: colors
+        widget.is_continuous_color = lambda: False
+        graph.palette = DefaultRGBColors
+        graph.controls.show_ellipse.setChecked(True)
+
+        graph.update_ellipse()
+
+        item = graph.ellipse_items[1]
+        self.assertEqual(item.pos().x(), 0)
+        self.assertEqual(item.pos().y(), 0)
+        self.assertEqual(item.opts["pen"].color().hue(),
+                         graph.palette[0].hue())
+
+        item = graph.ellipse_items[2]
+        self.assertEqual(item.pos().x(), 0)
+        self.assertEqual(item.pos().y(), 0)
+        self.assertEqual(item.opts["pen"].color().hue(),
+                         graph.palette[1].hue())
 
     def test_orthonormal_line(self):
         color = QColor(1, 2, 3)
@@ -1049,7 +1075,7 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
                          [0, 1], [1, 3], [2, 5]], dtype=float).T
         colors = np.array([0, 0, 0, 0, 1, 1, 1], dtype=float)
         widget.get_coordinates_data = lambda: (x, y)
-        widget.can_draw_regresssion_line = lambda: True
+        widget.can_draw_regression_line = lambda: True
         widget.get_color_data = lambda: colors
         widget.is_continuous_color = lambda: False
         graph.palette = DefaultRGBColors
@@ -1214,6 +1240,7 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
 
         self.widget.graph.controls.show_reg_line.setChecked(True)
         self.assertGreater(len(graph.parameter_setter.reg_line_label_items), 0)
+        self.widget.graph.controls.show_ellipse.setChecked(True)
 
         key, value = ('Fonts', 'Line label', 'Font size'), 16
         self.widget.set_visual_settings(key, value)
@@ -1227,6 +1254,232 @@ class TestOWScatterPlot(WidgetTest, ProjectionWidgetTestMixin,
         self.widget.set_visual_settings(key, value)
         for item in graph.reg_line_items:
             self.assertEqual(item.pen.width(), 10)
+        for item in graph.ellipse_items:
+            self.assertEqual(item.opts["pen"].width(), 10)
+
+    def test_error_bars_enabled(self):
+        self.assertFalse(self.widget.button_attr_x.isEnabled())
+        self.assertFalse(self.widget.button_attr_y.isEnabled())
+        self.send_signal(self.widget.Inputs.data, self.data)
+        self.assertTrue(self.widget.button_attr_x.isEnabled())
+        self.assertTrue(self.widget.button_attr_y.isEnabled())
+        self.send_signal(self.widget.Inputs.data, Table("zoo"))
+        self.assertFalse(self.widget.button_attr_x.isEnabled())
+        self.assertFalse(self.widget.button_attr_y.isEnabled())
+
+    def test_error_bars(self):
+        data = Table("iris")
+        var = ContinuousVariable("ϵ")
+        data = data.add_column(var, np.full(150, 0.1))
+
+        self.send_signal(self.widget.Inputs.data, data)
+        self.widget.attr_x_upper = var
+        self.widget.attr_x_lower = var
+        self.widget.attr_y_upper = var
+        self.widget.attr_y_lower = var
+
+        graph = self.widget.graph
+        graph.reset_graph()
+        self.assertEqual(len(graph.error_bars_items), 2)
+
+        self.send_signal(self.widget.Inputs.data, None)
+        self.assertEqual(len(graph.error_bars_items), 0)
+
+    def test_error_bars_missing_values(self):
+        data = Table("iris")
+        with data.unlocked():
+            data.X[0, 0] = np.nan
+            data.X[1, 0] = np.nan
+        data = data[:4]
+        var = ContinuousVariable("ϵ")
+        data = data.add_column(var, np.array([0.1, np.nan, 0.1, np.nan]))
+
+        self.send_signal(self.widget.Inputs.data, data)
+        self.widget.attr_x_upper = var
+        self.widget.attr_x_lower = var
+        self.widget.attr_y_upper = var
+        self.widget.attr_y_lower = var
+
+        graph = self.widget.graph
+        graph.reset_graph()
+        self.assertEqual(len(graph.error_bars_items), 2)
+        self.assertEqual(len(graph.scatterplot_item.data), 2)
+        self.assertEqual(len(graph.error_bars_items[0].opts["left"]), 2)
+
+    def test_error_bars_jitter(self):
+        data = Table("iris")
+        var = ContinuousVariable("ϵ")
+        data = data.add_column(var, np.full(150, 0.1))
+
+        self.send_signal(self.widget.Inputs.data, data)
+        self.widget.attr_x_upper = var
+        self.widget.attr_x_lower = var
+
+        self.widget.graph.reset_graph()
+        error_bar_item = self.widget.graph.error_bars_items[0]
+        self.assertEqual(list(error_bar_item.opts["x"][:3]),
+                         list(data.X[:3, 0]))
+        self.assertEqual(list(error_bar_item.opts["y"][:3]),
+                         list(data.X[:3, 1]))
+        self.assertEqual(list(error_bar_item.opts["left"][:3]), [0.1] * 3)
+        self.assertEqual(list(error_bar_item.opts["right"][:3]), [0.1] * 3)
+
+
+        self.widget.graph.controls.jitter_continuous.setChecked(True)
+        self.widget.graph.controls.jitter_size.setValue(10)
+        self.widget.graph.reset_graph()
+
+        error_bar_item = self.widget.graph.error_bars_items[0]
+        self.assertEqual(list(error_bar_item.opts["x"][:3].round(1)),
+                         [5.2, 5.1, 4.8])
+        self.assertEqual(list(error_bar_item.opts["y"][:3].round(1)),
+                         [3.6, 2.9, 3.3])
+        self.assertEqual(list(error_bar_item.opts["left"][:3]), [0.1] * 3)
+        self.assertEqual(list(error_bar_item.opts["right"][:3]), [0.1] * 3)
+
+    def test_error_bars_abs_values(self):
+        data = Table("iris")
+        var_upper = ContinuousVariable("ϵ_upper")
+        var_lower = ContinuousVariable("ϵ_lower")
+        data = data.add_column(var_upper, data.X[:, 0] + 0.1)
+        data = data.add_column(var_lower, data.X[:, 0] - 0.1)
+
+        self.send_signal(self.widget.Inputs.data, data)
+        self.widget.attr_x_upper = var_upper
+        self.widget.attr_x_lower = var_lower
+        self.widget.attr_x_is_abs = True
+
+        self.widget.graph.reset_graph()
+        error_bar_item = self.widget.graph.error_bars_items[0]
+        self.assertEqual(list(error_bar_item.opts["x"][:3]),
+                         list(data.X[:3, 0]))
+        self.assertEqual(list(error_bar_item.opts["y"][:3]),
+                         list(data.X[:3, 1]))
+        self.assertEqual(list(error_bar_item.opts["left"][:3].round(1)),
+                         [0.1] * 3)
+        self.assertEqual(list(error_bar_item.opts["right"][:3].round(1)),
+                         [0.1] * 3)
+
+    def test_error_bars_button_clicked(self):
+        data = Table("iris")
+        var1 = ContinuousVariable("ϵ1")
+        var2 = ContinuousVariable("ϵ2")
+        var3 = ContinuousVariable("ϵ3")
+        var4 = ContinuousVariable("ϵ4")
+        data = data.add_column(var1, np.full(150, 0.1))
+        data = data.add_column(var2, np.full(150, 0.1))
+        data = data.add_column(var3, np.full(150, 0.1))
+        data = data.add_column(var4, np.full(150, 0.1))
+
+        self.send_signal(self.widget.Inputs.data, data)
+        self.widget.attr_x_upper = var1
+        self.widget.attr_x_lower = var2
+        self.widget.attr_y_upper = var3
+        self.widget.attr_y_lower = var4
+
+        x_dlg = self.widget._OWScatterPlot__x_axis_dlg
+        x_dlg._set_data = Mock()
+        x_dlg.show = Mock()
+        x_dlg.raise_ = Mock()
+        x_dlg.activateWindow = Mock()
+        self.widget.button_attr_x.click()
+        x_dlg._set_data.assert_called_with(data.domain, var1, var2, False)
+
+        y_dlg = self.widget._OWScatterPlot__y_axis_dlg
+        y_dlg._set_data = Mock()
+        y_dlg.show = Mock()
+        y_dlg.raise_ = Mock()
+        y_dlg.activateWindow = Mock()
+        self.widget.button_attr_y.click()
+        y_dlg._set_data.assert_called_with(data.domain, var3, var4, False)
+
+    def test_error_bars_dlg_changed(self):
+        data = Table("iris")
+        var_upper = ContinuousVariable("ϵ_upper")
+        var_lower = ContinuousVariable("ϵ_lower")
+        data = data.add_column(var_upper, data.X[:, 1] + 0.2)
+        data = data.add_column(var_lower, data.X[:, 1] - 0.1)
+
+        self.send_signal(self.widget.Inputs.data, data)
+        self.widget.attr_y_upper = var_upper
+        self.widget.attr_y_lower = var_lower
+
+        y_dlg = self.widget._OWScatterPlot__y_axis_dlg
+        y_dlg.show = Mock()
+        y_dlg.raise_ = Mock()
+        y_dlg.activateWindow = Mock()
+        self.widget.button_attr_y.click()
+        y_dlg._ErrorBarsDialog__radio_buttons.buttons()[1].click()
+
+        self.widget.graph.reset_graph()
+        error_bar_item = self.widget.graph.error_bars_items[1]
+        self.assertEqual(list(error_bar_item.opts["x"][:3]),
+                         list(data.X[:3, 0]))
+        self.assertEqual(list(error_bar_item.opts["y"][:3]),
+                         list(data.X[:3, 1]))
+        self.assertEqual(list(error_bar_item.opts["top"][:3].round(1)),
+                         [0.2] * 3)
+        self.assertEqual(list(error_bar_item.opts["bottom"][:3].round(1)),
+                         [0.1] * 3)
+
+    def test_error_bars_saved_settings(self):
+        data = Table("iris")
+        var_upper = ContinuousVariable("ϵ_upper")
+        var_lower = ContinuousVariable("ϵ_lower")
+        data = data.add_column(var_upper, data.X[:, 0] + 0.2)
+        data = data.add_column(var_lower, data.X[:, 0] - 0.1)
+
+        self.send_signal(self.widget.Inputs.data, data)
+        self.widget.attr_x_upper = var_upper
+        self.widget.attr_x_lower = var_lower
+        self.widget.attr_x_is_abs = True
+
+        settings = self.widget.settingsHandler.pack_data(self.widget)
+        widget = self.create_widget(OWScatterPlot, stored_settings=settings)
+        self.send_signal(widget.Inputs.data, data, widget=widget)
+
+        widget.graph.reset_graph()
+        error_bar_item = widget.graph.error_bars_items[0]
+        self.assertEqual(list(error_bar_item.opts["x"][:3]),
+                         list(data.X[:3, 0]))
+        self.assertEqual(list(error_bar_item.opts["y"][:3]),
+                         list(data.X[:3, 1]))
+        self.assertEqual(list(error_bar_item.opts["right"][:3].round(1)),
+                         [0.2] * 3)
+        self.assertEqual(list(error_bar_item.opts["left"][:3].round(1)),
+                         [0.1] * 3)
+
+    def test_error_bars_change_domain(self):
+        data = Table("iris")
+        var_upper = ContinuousVariable("ϵ_upper")
+        var_lower = ContinuousVariable("ϵ_lower")
+        data = data.add_column(var_upper, data.X[:, 0] + 0.1)
+        data = data.add_column(var_lower, data.X[:, 0] - 0.1)
+
+        self.send_signal(self.widget.Inputs.data, data)
+        self.widget.attr_x_upper = var_upper
+        self.widget.attr_x_lower = var_lower
+        self.widget.attr_x_is_abs = True
+
+        _data = Table("iris")
+        var_upper = ContinuousVariable("ϵ_upper_")
+        var_lower = ContinuousVariable("ϵ_lower_")
+        _data = _data.add_column(var_upper, _data.X[:, 0] + 0.1)
+        _data = _data.add_column(var_lower, _data.X[:, 0] - 0.1)
+        self.send_signal(self.widget.Inputs.data, _data)
+        self.assertEqual(self.widget.graph.error_bars_items, [])
+
+        self.send_signal(self.widget.Inputs.data, data)
+        self.widget.graph.reset_graph()
+        error_bar_item = self.widget.graph.error_bars_items[0]
+        self.assertEqual(list(error_bar_item.opts["x"][:3]),
+                         list(data.X[:3, 0]))
+        self.assertEqual(list(error_bar_item.opts["y"][:3]),
+                         list(data.X[:3, 1]))
+        self.assertEqual(list(error_bar_item.opts["right"][:3].round(1)),
+                         [0.1] * 3)
+        self.assertEqual(list(error_bar_item.opts["left"][:3].round(1)),
+                         [0.1] * 3)
 
 
 if __name__ == "__main__":

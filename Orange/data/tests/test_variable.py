@@ -1,6 +1,7 @@
 # Test methods with long descriptive names can omit docstrings
 # pylint: disable=missing-docstring
 # pylint: disable=protected-access
+import csv
 import os
 import sys
 import math
@@ -10,7 +11,7 @@ import pkgutil
 import warnings
 from datetime import datetime, timezone
 
-from io import StringIO
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 import numpy as np
 import pandas as pd
@@ -359,6 +360,10 @@ class TestDiscreteVariable(VariableTest):
         self.assertEqual(list(a.values), ["a", "b", "c"])
         self.assertEqual(list(a._value_index), ["a", "b", "c"])
 
+    def test_no_duplicates_in_constructor(self):
+        self.assertRaises(ValueError, DiscreteVariable,
+                          "foo", values=("a", "b", "a"))
+
     def test_unpickle(self):
         d1 = DiscreteVariable("A", values=("two", "one"))
         s = pickle.dumps(d1)
@@ -633,6 +638,8 @@ class TestStringVariable(VariableTest):
         self.assertEqual(a.str_val(""), "?")
         self.assertEqual(a.str_val(Value(a, "")), "?")
         self.assertEqual(a.repr_val(Value(a, "foo")), '"foo"')
+        self.assertEqual(a.str_val(np.nan), "?")
+        self.assertEqual(a.str_val(None), "?")
 
 
 @variabletest(TimeVariable)
@@ -714,27 +721,35 @@ class TestTimeVariable(VariableTest):
         self.assertEqual(TimeVariable('relative time').repr_val(1.6), '1.6')
 
     def test_readwrite_timevariable(self):
-        output_csv = StringIO()
-        input_csv = StringIO("""\
-Date,Feature
-time,continuous
-,
-1920-12-12,1.0
-1920-12-13,3.0
-1920-12-14,5.5
-""")
-        for stream in (output_csv, input_csv):
-            stream.close = lambda: None  # HACK: Prevent closing of streams
+        content = [
+            ("Date", "Feature"),
+            ("time", "continuous"),
+            ("", ""),
+            ("1920-12-12", 1.0),
+            ("1920-12-13", 3.0),
+            ("1920-12-14", 5.5),
+        ]
+        with NamedTemporaryFile(
+            mode="w", delete=False, newline="", encoding="utf-8"
+        ) as input_csv:
+            csv.writer(input_csv, delimiter=",").writerows(content)
 
-        table = CSVReader(input_csv).read()
-        self.assertIsInstance(table.domain['Date'], TimeVariable)
-        self.assertEqual(table[0, 'Date'], '1920-12-12')
+        table = CSVReader(input_csv.name).read()
+        self.assertIsInstance(table.domain["Date"], TimeVariable)
+        self.assertEqual(table[0, "Date"], "1920-12-12")
         # Dates before 1970 are negative
-        self.assertTrue(all(inst['Date'] < 0 for inst in table))
+        self.assertTrue(all(inst["Date"] < 0 for inst in table))
 
-        CSVReader.write_file(output_csv, table)
-        self.assertEqual(input_csv.getvalue().splitlines(),
-                         output_csv.getvalue().splitlines())
+        with NamedTemporaryFile(mode="w", delete=False) as output_csv:
+            pass
+        CSVReader.write_file(output_csv.name, table)
+
+        with open(input_csv.name, encoding="utf-8") as in_f:
+            with open(output_csv.name, encoding="utf-8") as out_f:
+                self.assertEqual(in_f.read(), out_f.read())
+
+        os.unlink(input_csv.name)
+        os.unlink(output_csv.name)
 
     def test_repr_value(self):
         # https://github.com/biolab/orange3/pull/1760

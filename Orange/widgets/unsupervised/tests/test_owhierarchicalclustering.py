@@ -1,10 +1,12 @@
 # Test methods with long descriptive names can omit docstrings
 # pylint: disable=missing-docstring, protected-access
+import unittest
 import warnings
 
 import numpy as np
 
 from AnyQt.QtCore import QPoint, Qt
+from AnyQt.QtGui import QColor
 from AnyQt.QtTest import QTest
 
 import Orange.misc
@@ -13,7 +15,7 @@ from Orange.distance import Euclidean
 from Orange.misc import DistMatrix
 from Orange.widgets.tests.base import WidgetTest, WidgetOutputsTestMixin
 from Orange.widgets.unsupervised.owhierarchicalclustering import \
-    OWHierarchicalClustering
+    OWHierarchicalClustering, SelectedLabelsModel
 
 
 class TestOWHierarchicalClustering(WidgetTest, WidgetOutputsTestMixin):
@@ -207,3 +209,35 @@ class TestOWHierarchicalClustering(WidgetTest, WidgetOutputsTestMixin):
         annotated = [(a.name, a.attributes['cluster']) for a in o.domain.attributes]
         self.assertEqual(annotated, [('sepal length', 1), ('petal width', 2),
                                      ('sepal width', 3), ('petal length', 3)])
+
+    def test_many_values_warning(self):
+        w = self.widget
+
+        self.send_signal(self.widget.Inputs.distances, self.distances)
+        w.top_n = 21
+        w.selection_box.buttons[2].click()
+        self.assertTrue(w.Warning.many_clusters.is_shown())
+
+        w.top_n = 20
+        w.selection_box.buttons[2].click()
+        self.assertFalse(w.Warning.many_clusters.is_shown())
+
+        w.top_n = 21
+        w.selection_box.buttons[2].click()
+        self.assertTrue(w.Warning.many_clusters.is_shown())
+
+        self.send_signal(self.widget.Inputs.distances, None)
+        self.assertFalse(w.Warning.many_clusters.is_shown())
+
+
+class TestSelectedLabelsModel(unittest.TestCase):
+    def test_model_extend(self):
+        model = SelectedLabelsModel()
+        model[:] = ["1"]
+        model.set_colors([QColor(Qt.blue)])
+        index = model.index(0)
+        self.assertEqual(index.data(Qt.DisplayRole), "1")
+        self.assertEqual(index.data(Qt.BackgroundRole), QColor(Qt.blue))
+        model[:]= ["1", "2"]
+        index1 = model.index(1)
+        self.assertEqual(index1.data(Qt.BackgroundRole), QColor()) # should be invalid color

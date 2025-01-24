@@ -10,6 +10,7 @@ from math import isnan, floor
 from pickle import PickleError
 
 import numpy as np
+import pandas
 import scipy.sparse as sp
 
 from Orange.data import _variable
@@ -689,6 +690,8 @@ class DiscreteVariable(Variable):
         values = tuple(values)  # some people (including me) pass a generator
         if not all(isinstance(value, str) for value in values):
             raise TypeError("values of DiscreteVariables must be strings")
+        if len(set(values)) < len(values):
+            raise ValueError("Duplicate values in DiscreteVariable")
 
         super().__init__(name, compute_value, sparse=sparse)
         self._values = values
@@ -905,6 +908,8 @@ class StringVariable(Variable):
             if not val.value:
                 return "?"
             val = val.value
+        if pandas.isnull(val):
+            return "?"
         return str(val)
 
     def repr_val(self, val):
