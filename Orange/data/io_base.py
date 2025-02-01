@@ -15,6 +15,7 @@ from fnmatch import fnmatch
 from glob import glob
 
 import numpy as np
+import pandas
 
 from Orange.data import Table, Domain, Variable, DiscreteVariable, \
     StringVariable, ContinuousVariable, TimeVariable
@@ -48,7 +49,7 @@ class Flags:
         ('weight', 'w'),
         ('.+?=.*?', ''),  # general key=value attributes
     ))
-    _RE_ALL = re.compile(r'^({})$'.format('|'.join(
+    RE_ALL = re.compile(r'^({})$'.format('|'.join(
         filter(None, flatten(ALL.items())))))
 
     def __init__(self, flags):
@@ -57,7 +58,7 @@ class Flags:
         self.attributes = {}
         for flag in flags or []:
             flag = flag.strip()
-            if self._RE_ALL.match(flag):
+            if self.RE_ALL.match(flag):
                 if '=' in flag:
                     k, v = flag.split('=', 1)
                     if not Flags._RE_ATTR_UNQUOTED_STR(v):
@@ -167,10 +168,28 @@ class _TableHeader:
           2) -||- with type and flags prepended, separated by #,
              e.g. d#sex,c#age,cC#IQ
         """
-        flags, names = zip(*[i.split(cls.HEADER1_FLAG_SEP, 1)
-                             if cls.HEADER1_FLAG_SEP in i else ('', i)
-                             for i in headers[0]])
-        names = list(names)
+
+        roles = "".join([f for f in Flags.ALL.values() if len(f) == 1])  # cimw
+        types = "".join([t for t in flatten(getattr(vartype, 'TYPE_HEADERS')
+                                            for vartype in Variable.registry.values())
+                         if len(t) == 1]).upper()  # CNDST
+
+        res = ('^((?P<flags>'
+               f'[{roles}{types}]|'
+               f'([{roles}][{types}])|'
+               f'([{types}][{roles}])'
+               ')#)?(?P<name>.*)')
+
+        header1_re = re.compile(res)
+
+        flags = []
+        names = []
+        for i in headers[0]:
+            m = header1_re.match(i)
+            f, n = m.group("flags", "name")
+            flags.append('' if f is None else f)
+            names.append(n)
+
         return names, cls._type_from_flag(flags), cls._flag_from_flag(flags)
 
     @classmethod
@@ -658,7 +677,7 @@ class _FileWriter:
         elif var.is_discrete:
             return lambda value: "" if isnan(value) else var.values[int(value)]
         elif var.is_string:
-            return lambda value: value
+            return lambda value: "" if pandas.isnull(value) else value
         else:
             return var.repr_val
 

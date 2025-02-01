@@ -29,6 +29,7 @@ from Orange.data import (
 from Orange.data.util import SharedComputeValue, \
     assure_array_dense, assure_array_sparse, \
     assure_column_dense, assure_column_sparse, get_unique_names_duplicates
+from Orange.misc.cache import IDWeakrefCache
 from Orange.misc.collections import frozendict
 from Orange.statistics.util import bincount, countnans, contingency, \
     stats as fast_stats, sparse_has_implicit_zeros, sparse_count_implicit_zeros, \
@@ -305,10 +306,11 @@ class _ArrayConversion:
                 )
             elif not isinstance(col, Integral):
                 if isinstance(col, SharedComputeValue):
-                    shared = _idcache_restore(shared_cache, (col.compute_shared, source))
-                    if shared is None:
+                    try:
+                        shared = shared_cache[(col.compute_shared, source)]
+                    except KeyError:
                         shared = col.compute_shared(sourceri)
-                        _idcache_save(shared_cache, (col.compute_shared, source), shared)
+                        shared_cache[col.compute_shared, source] = shared
                     col_array = match_density(
                         _compute_column(col, sourceri, shared_data=shared))
                 else:
@@ -439,7 +441,7 @@ class _FromTableConversion:
 
                 # clear cache after a part is done
                 if clear_cache_after_part:
-                    _thread_local.conversion_cache = {}
+                    _thread_local.conversion_cache.clear()
 
             for array_conv in self.columnwise:
                 res[array_conv.target] = \
@@ -792,24 +794,26 @@ class Table(Sequence, Storage):
         :return: a new table
         :rtype: Orange.data.Table
         """
+        if domain is source.domain:
+            table = cls.from_table_rows(source, row_indices)
+            # assure resulting domain is the instance passed on input
+            table.domain = domain
+            # since sparse flags are not considered when checking for
+            # domain equality, fix manually.
+            with table.unlocked_reference():
+                table = assure_domain_conversion_sparsity(table, source)
+            return table
+
         new_cache = _thread_local.conversion_cache is None
         try:
             if new_cache:
-                _thread_local.conversion_cache = {}
-                _thread_local.domain_cache = {}
+                _thread_local.conversion_cache = IDWeakrefCache({})
+                _thread_local.domain_cache = IDWeakrefCache({})
             else:
-                cached = _idcache_restore(_thread_local.conversion_cache, (domain, source))
-                if cached is not None:
-                    return cached
-            if domain is source.domain:
-                table = cls.from_table_rows(source, row_indices)
-                # assure resulting domain is the instance passed on input
-                table.domain = domain
-                # since sparse flags are not considered when checking for
-                # domain equality, fix manually.
-                with table.unlocked_reference():
-                    table = assure_domain_conversion_sparsity(table, source)
-                return table
+                try:
+                    return _thread_local.conversion_cache[(domain, source)]
+                except KeyError:
+                    pass
 
             # avoid boolean indices; also convert to slices if possible
             row_indices = _optimize_indices(row_indices, len(source))
@@ -817,12 +821,12 @@ class Table(Sequence, Storage):
             self = cls()
             self.domain = domain
 
-            table_conversion = \
-                _idcache_restore(_thread_local.domain_cache, (domain, source.domain))
-            if table_conversion is None:
+            try:
+                table_conversion = \
+                    _thread_local.domain_cache[(domain, source.domain)]
+            except KeyError:
                 table_conversion = _FromTableConversion(source.domain, domain)
-                _idcache_save(_thread_local.domain_cache, (domain, source.domain),
-                              table_conversion)
+                _thread_local.domain_cache[(domain, source.domain)] = table_conversion
 
             # if an array can be a subarray of the input table, this needs to be done
             # on the whole table, because this avoids needless copies of contents
@@ -834,8 +838,10 @@ class Table(Sequence, Storage):
                 self.W = source.W[row_indices]
                 self.name = getattr(source, 'name', '')
                 self.ids = source.ids[row_indices]
-                self.attributes = deepcopy(getattr(source, 'attributes', {}))
-                _idcache_save(_thread_local.conversion_cache, (domain, source), self)
+                self.attributes = getattr(source, 'attributes', {})
+                if new_cache:  # only deepcopy attributes for the outermost transformation
+                    self.attributes = deepcopy(self.attributes)
+                _thread_local.conversion_cache[(domain, source)] = self
             return self
         finally:
             if new_cache:
@@ -879,6 +885,7 @@ class Table(Sequence, Storage):
         :return: a new table
         :rtype: Orange.data.Table
         """
+        is_outermost_transformation = _thread_local.conversion_cache is None
         self = cls()
         self.domain = source.domain
         with self.unlocked_reference():
@@ -892,7 +899,9 @@ class Table(Sequence, Storage):
             self.W = source.W[row_indices]
             self.name = getattr(source, 'name', '')
             self.ids = source.ids[row_indices]
-            self.attributes = deepcopy(getattr(source, 'attributes', {}))
+            self.attributes = getattr(source, 'attributes', {})
+            if is_outermost_transformation:
+                self.attributes = deepcopy(self.attributes)
         return self
 
     @classmethod
@@ -1325,7 +1334,7 @@ class Table(Sequence, Storage):
         return s
 
     @classmethod
-    def concatenate(cls, tables, axis=0):
+    def concatenate(cls, tables, axis=0, *, ignore_domains=None):
         """
         Concatenate tables into a new table, either vertically or horizontally.
 
@@ -1346,14 +1355,15 @@ class Table(Sequence, Storage):
         """
         if axis not in (0, 1):
             raise ValueError("invalid axis")
+        if ignore_domains is not None and axis != 0:
+            raise ValueError("'ignore_domains' is incompatible with 'axis=1'")
         if not tables:
             raise ValueError('need at least one table to concatenate')
 
         if len(tables) == 1:
             return tables[0].copy()
-
         if axis == 0:
-            conc = cls._concatenate_vertical(tables)
+            conc = cls._concatenate_vertical(tables, bool(ignore_domains))
         else:
             conc = cls._concatenate_horizontal(tables)
 
@@ -1368,7 +1378,7 @@ class Table(Sequence, Storage):
         return conc
 
     @classmethod
-    def _concatenate_vertical(cls, tables):
+    def _concatenate_vertical(cls, tables, ignore_domains=False):
         def vstack(arrs):
             return [np, sp][any(sp.issparse(arr) for arr in arrs)].vstack(arrs)
 
@@ -1387,7 +1397,8 @@ class Table(Sequence, Storage):
             return [getattr(arr, attr) for arr in tables]
 
         domain = tables[0].domain
-        if any(table.domain != domain for table in tables):
+        if not ignore_domains \
+                and any(table.domain != domain for table in tables):
             raise ValueError('concatenated tables must have the same domain')
 
         conc = cls.from_numpy(
@@ -1549,17 +1560,46 @@ class Table(Sequence, Storage):
         return bn.anynan(self._Y)
 
     @staticmethod
-    def __get_nan_frequency(data):
+    def __get_nan_count(data):
         if data.size == 0:
             return 0
         dense = data if not sp.issparse(data) else data.data
-        return np.isnan(dense).sum() / np.prod(data.shape)
+        return np.isnan(dense).sum()
+
+    @classmethod
+    def __get_nan_frequency(cls, data):
+        return cls.__get_nan_count(data) / (np.prod(data.shape) or 1)
+
+    def get_nan_count_attribute(self):
+        return self.__get_nan_count(self.X)
+
+    def get_nan_count_class(self):
+        return self.__get_nan_count(self.Y)
+
+    def get_nan_count_metas(self):
+        if self.metas.dtype != object:
+            return self.__get_nan_count(self.metas)
+
+        data = self.metas
+        if sp.issparse(data):
+            data = data.tocsc()
+
+        count = 0
+        for i, attr in enumerate(self.domain.metas):
+            col = data[:, i]
+            missing = np.isnan(col.astype(float)) \
+                if not isinstance(attr, StringVariable) else data == ""
+            count += np.sum(missing)
+        return count
 
     def get_nan_frequency_attribute(self):
         return self.__get_nan_frequency(self.X)
 
     def get_nan_frequency_class(self):
         return self.__get_nan_frequency(self.Y)
+
+    def get_nan_frequency_metas(self):
+        return self.get_nan_count_metas() / (np.prod(self.metas.shape) or 1)
 
     def checksum(self, include_metas=True):
         # TODO: zlib.adler32 does not work for numpy arrays with dtype object
@@ -1691,7 +1731,12 @@ class Table(Sequence, Storage):
                 raise ValueError(f"cannot set data for variable {index.name} "
                                  "with different encoding")
             index = self.domain.index(index)
-        self._get_column_view(index)[:] = data
+        # Zero-sized arrays cannot be made writeable, yet the below
+        # assignment would fail despite doing nothing.
+        if len(self) > 0:
+            self._get_column_view(index)[:] = data
+        else:
+            assert len(self) == len(data)
 
     def _filter_is_defined(self, columns=None, negate=False):
         # structure of function is obvious; pylint: disable=too-many-branches

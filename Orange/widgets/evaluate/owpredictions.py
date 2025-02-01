@@ -16,8 +16,8 @@ from AnyQt.QtCore import (
     QModelIndex, pyqtSignal, QTimer,
     QItemSelectionModel, QItemSelection)
 
-from orangecanvas.utils.localization import pl
 from orangewidget.utils.itemmodels import AbstractSortTableModel
+from orangewidget.utils.signals import LazyValue
 
 import Orange
 from Orange.evaluation import Results
@@ -31,10 +31,14 @@ from Orange.widgets.evaluate.utils import (
 from Orange.widgets.utils.widgetpreview import WidgetPreview
 from Orange.widgets.widget import OWWidget, Msg, Input, Output, MultiInput
 from Orange.widgets.utils.itemmodels import TableModel
+from Orange.widgets.utils.annotated_data import lazy_annotated_table, \
+    domain_with_annotation_column, create_annotated_table
+from Orange.widgets.utils.multi_target import multiple_targets_msg
 from Orange.widgets.utils.sql import check_sql_input
 from Orange.widgets.utils.state_summary import format_summary_details
 from Orange.widgets.utils.colorpalettes import LimitedDiscretePalette
 from Orange.widgets.utils.itemdelegates import TableDataDelegate
+from Orange.widgets.utils.localization import pl
 
 # Input slot for the Predictors channel
 PredictorSlot = NamedTuple(
@@ -72,7 +76,9 @@ class OWPredictions(OWWidget):
         predictors = MultiInput("Predictors", Model, filter_none=True)
 
     class Outputs:
-        predictions = Output("Predictions", Orange.data.Table)
+        selected_predictions = Output("Selected Predictions", Orange.data.Table,
+                                      default=True, replaces=["Predictions"])
+        annotated = Output("Predictions", Orange.data.Table)
         evaluation_results = Output("Evaluation Results", Results)
 
     class Warning(OWWidget.Warning):
@@ -418,6 +424,10 @@ class OWPredictions(OWWidget):
                 backmappers, n_values = predictor.get_backmappers(self.data)
                 prob = predictor.backmap_probs(prob, n_values, backmappers)
                 pred = predictor.backmap_value(pred, prob, n_values, backmappers)
+            if len(pred.shape) > 1 and pred.shape[1] > 1:
+                self.predictors[index] = \
+                    slot._replace(results=multiple_targets_msg)
+                continue
             results.predicted = pred.reshape((1, len(self.data)))
             results.probabilities = prob.reshape((1,) + prob.shape)
 
@@ -492,6 +502,7 @@ class OWPredictions(OWWidget):
         else:
             view.setVisible(False)
             self.Error.scorer_failed.clear()
+        self._set_errors()
 
     def _set_errors(self):
         # Not all predictors are run every time, so errors can't be collected
@@ -510,7 +521,8 @@ class OWPredictions(OWWidget):
                              and p.results.probabilities is None))
             self.Warning.wrong_targets(inv_targets, shown=bool(inv_targets))
 
-            show_warning = numpy.isnan(self.data.Y).any() and self.predictors
+            show_warning = numpy.isnan(self.data.Y).any() and self.predictors \
+                and self.show_scores
             self.Warning.missing_targets(shown=show_warning)
         else:
             self.Warning.wrong_targets.clear()
@@ -814,7 +826,8 @@ class OWPredictions(OWWidget):
 
     def _commit_predictions(self):
         if not self.data:
-            self.Outputs.predictions.send(None)
+            self.Outputs.selected_predictions.send(None)
+            self.Outputs.annotated.send(None)
             return
 
         newmetas = []
@@ -850,17 +863,26 @@ class OWPredictions(OWWidget):
         predmodel = self.predictionsview.model()
         assert datamodel is not None  # because we have data
         assert self.selection_store is not None
-        rows = numpy.array(list(self.selection_store.rows))
+        rows = numpy.array(list(self.selection_store.rows), dtype=int)
         if rows.size:
+            domain, _ = domain_with_annotation_column(predictions)
+            annotated_data = LazyValue[Orange.data.Table](
+                lambda: create_annotated_table(
+                    predictions, rows)[datamodel.mapToSourceRows(...)],
+                length=len(predictions), domain=domain)
+
             # Reorder rows as they are ordered in view
             shown_rows = datamodel.mapFromSourceRows(rows)
             rows = rows[numpy.argsort(shown_rows)]
-            predictions = predictions[rows]
-        elif datamodel.sortColumn() >= 0 \
-                or predmodel is not None and predmodel.sortColumn() > 0:
-            # No selection: output all, but in the shown order
-            predictions = predictions[datamodel.mapToSourceRows(...)]
-        self.Outputs.predictions.send(predictions)
+            selected = predictions[rows]
+        else:
+            if datamodel.sortColumn() >= 0 \
+                    or predmodel is not None and predmodel.sortColumn() > 0:
+                predictions = predictions[datamodel.mapToSourceRows(...)]
+            selected = predictions
+            annotated_data = lazy_annotated_table(predictions, rows)
+        self.Outputs.selected_predictions.send(selected)
+        self.Outputs.annotated.send(annotated_data)
 
     def _add_classification_out_columns(self, slot, newmetas, newcolumns, index):
         pred = slot.predictor
@@ -895,7 +917,6 @@ class OWPredictions(OWWidget):
             name = f"{slot.predictor.name} (error)"
             newmetas.append(ContinuousVariable(name=name))
             err = self.predictionsview.model().errorColumn(index)
-            err[err == 2] = numpy.nan
             newcolumns.append(err)
 
     def send_report(self):
@@ -1363,8 +1384,7 @@ class PredictionsModel(AbstractSortTableModel):
             nans = numpy.isnan(actuals)
             actuals[nans] = 0
             errors = 1 - numpy.choose(actuals.astype(int), self._probs[column].T)
-            errors[nans] = 2
-            errors[numpy.isnan(errors)] = 2
+            errors[nans] = numpy.nan
             return errors
         else:
             actual = self._actual

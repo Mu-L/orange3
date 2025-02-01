@@ -3,7 +3,7 @@ import itertools
 from collections.abc import Iterable
 import re
 import warnings
-from typing import Callable, Dict, Optional
+from typing import Callable, Optional, NamedTuple, Type
 
 import numpy as np
 import scipy
@@ -18,6 +18,7 @@ from Orange.preprocess import Continuize, RemoveNaNColumns, SklImpute, Normalize
 from Orange.statistics.util import all_nan
 from Orange.util import Reprable, OrangeDeprecationWarning, wrap_callback, \
     dummy_callback
+
 
 __all__ = ["Learner", "Model", "SklLearner", "SklModel",
            "ReprableWithPreprocessors"]
@@ -86,6 +87,13 @@ class Learner(ReprableWithPreprocessors):
     #: A sequence of data preprocessors to apply on data prior to
     #: fitting the model
     preprocessors = ()
+
+    class FittedParameter(NamedTuple):
+        name: str
+        label: str
+        type: Type
+        min: Optional[int] = None
+        max: Optional[int] = None
 
     # Note: Do not use this class attribute.
     #       It remains here for compatibility reasons.
@@ -177,6 +185,10 @@ class Learner(ReprableWithPreprocessors):
         if (self.use_default_preprocessors and
                 self.preprocessors is not type(self).preprocessors):
             yield from type(self).preprocessors
+
+    @property
+    def fitted_parameters(self) -> list:
+        return []
 
     # pylint: disable=no-self-use
     def incompatibility_reason(self, _: Domain) -> Optional[str]:
@@ -465,10 +477,9 @@ class Model(Reprable):
         elif prediction.ndim == 2 + multitarget:
             value, probs = None, prediction
         else:
-            raise TypeError("model returned a %i-dimensional array",
-                            prediction.ndim)
+            raise TypeError(f"model returned a {prediction.ndim}-dimensional array")
 
-        # Ensure that we have what we need to return; backmapp everything
+        # Ensure that we have what we need to return; backmap everything
         if probs is None and (ret != Model.Value or backmappers is not None):
             probs = one_hot_probs(value)
         if probs is not None:
@@ -596,7 +607,15 @@ class SklLearner(Learner, metaclass=WrapperMeta):
     def supports_weights(self):
         """Indicates whether this learner supports weighted instances.
         """
-        return 'sample_weight' in self.__wraps__.fit.__code__.co_varnames
+        warnings.warn('SklLearner.supports_weights property is deprecated. All '
+                      'subclasses should redefine the supports_weights attribute. '
+                      'The property will be removed in 3.39.',
+                      OrangeDeprecationWarning)
+        varnames = self.__wraps__.fit.__code__.co_varnames
+        # scikit-learn often uses decorators on fit()
+        if hasattr(self.__wraps__.fit, "__wrapped__"):
+            varnames = varnames + self.__wraps__.fit.__wrapped__.__code__.co_varnames
+        return 'sample_weight' in varnames
 
     def __getattr__(self, item):
         try:
@@ -875,5 +894,5 @@ class XGBBase(SklLearner):
         self.params = kwargs
 
     @SklLearner.params.setter
-    def params(self, values: Dict):
+    def params(self, values: dict):
         self._params = values

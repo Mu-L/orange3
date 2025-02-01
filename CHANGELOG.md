@@ -4,6 +4,88 @@ Change Log
 [next] - TBA
 ------------
 
+
+[3.38.1] - 2024-12-23
+--------------------
+##### Enhancements
+* Scatter Plot: Error Bars ([#6934](../../pull/6934))
+
+##### Bugfixes
+* 1 line headers: only allow single-letter types and flags ([#6959](../../pull/6959))
+* Group By: fix categorical aggregations ([#6958](../../pull/6958))
+* Orange can be imported without Qt (fixed importing localization) ([#6955](../../pull/6955))
+* Fix documentation in packages: fix sphinx build command ([#6950](../../pull/6950))
+* httpx 0.28 support: use mounts instead of proxies ([#6943](../../pull/6943))
+* owpredicttions: Remove special magic value 2 ([#6933](../../pull/6933))
+
+
+[3.38.0] - 2024-11-15
+--------------------
+##### Enhancements
+* Parameter Fitter: Basic implementation ([#6921](../../pull/6921))
+* Datasets: Add domain field; respect "Unlisted" ([#6920](../../pull/6920))
+* Datasets: Let the filter override domain and language ([#6930](../../pull/6930))
+* ScoringSheet and ScoringSheetViewer widgets ([#6817](../../pull/6817))
+* Multilingual package and installation ([#6828](../../pull/6828))
+
+##### Bugfixes
+* Calibrated Learner: Prevent in place modification of base learner ([#6917](../../pull/6917))
+* ListView: Fix selection ([#6823](../../pull/6823))
+* plotutils: Fix scene layout tracking in AnchorItem ([#6859](../../pull/6859))
+* oweditdomain: Hide "categories mapping" warning on change ([#6865](../../pull/6865))
+* Logistic regression: fix penalty argument for no regularization ([#6886](../../pull/6886))
+* Avoid slowdowns by caching Domain.__eq__ ([#6764](../../pull/6764))
+* SVM: degree has to be an integer ([#6866](../../pull/6866))
+* Only deepcopy the .attributes for the outermost Table transformation ([#6849](../../pull/6849))
+* Line plot: compatibility with scipy 1.14 ([#6845](../../pull/6845))
+* PCA: ensure tests pass on sklearn 1.4 and 1.5, which can return different results ([#6821](../../pull/6821))
+* Remove Orange implementation of randomized PCA for sparse data ([#6815](../../pull/6815))
+
+
+[3.37.0] - 2024-05-27
+--------------------
+##### Enhancements
+* Permutation Plot: Add widget ([#6762](../../pull/6762))
+* PLS: Move from Orange-spectroscopy ([#6734](../../pull/6734))
+* Open draged files on CSV Import, Load Model and Distance File widgets ([#6747](../../pull/6747))
+* Predictions: Output annotated table
+* Update t-SNE widget ([#6345](../../pull/6345))
+* CSV Import: Skip multi rows edit ([#6691](../../pull/6691))
+* Remove use of pkg_resources ([#6655](../../pull/6655))
+* Data Info: Show statistics about missing values ([#6623](../../pull/6623))
+
+##### Bugfixes
+* Edit Domain: Partial restore state on categories mismatch ([#6776](../../pull/6776))
+* Distances: Spearman actually computes Spearman instead of Pearson ([#6804](../../pull/6804))
+* tableview: Remove toggle selection on corner widget click ([#6802](../../pull/6802))
+* _simple_tree.c: Fix compilation error with gcc 14 ([#6800](../../pull/6800))
+* OWSom: Fix crash for data without class variable ([#6763](../../pull/6763))
+* io_util: Fix memory usage when parsing columns ([#6757](../../pull/6757))
+* pythoneditor/editor: Change order in `terminate` ([#6756](../../pull/6756))
+* Minor fixes to reenable falling CI ([#6751](../../pull/6751))
+* Fix failing tests on Python 3.11.8 on Windows ([#6737](../../pull/6737))
+* Table.add_column - Do not try to insert data in locked empty array ([#6743](../../pull/6743))
+* test_owcsvimport: Workaround for segfault in tests on macos ([#6735](../../pull/6735))
+* Domain Editor - Adapt to dark mode ([#6727](../../pull/6727))
+* Predictions: Output annotated table
+* CSV Import: Add explicit datetime conversion ([#6696](../../pull/6696))
+* setup.py: Replace use of imp module ([#6680](../../pull/6680))
+* Writers: Store nans in StringVariable as empty strings instead of 'nan' ([#6670](../../pull/6670))
+* Fix impute.Model for derived domains ([#6668](../../pull/6668))
+* CN2 Rule Induction: Fix model's effective name ([#6652](../../pull/6652))
+
+
+[3.36.2] - 2023-10-31
+--------------------
+##### Enhancements
+* oweditdomain: Add variable filter ([#6603](../../pull/6603))
+* IO - Change origin attribute when not find on system ([#6555](../../pull/6555))
+* Predictions: Output errors ([#6577](../../pull/6577))
+
+##### Bugfixes
+* EmbedderCache - Handle cache persisting when no permissions ([#6611](../../pull/6611))
+
+
 [3.36.1] - 2023-09-22
 --------------------
 ##### Bugfixes
@@ -1829,7 +1911,11 @@ Change Log
 * Initial version based on Python 1.5.2 and Qt 2.3
 
 
-[next]: https://github.com/biolab/orange3/compare/3.36.1..HEAD
+[next]: https://github.com/biolab/orange3/compare/3.38.1..HEAD
+[3.38.1]: https://github.com/biolab/orange3/compare/3.38.0...3.38.1
+[3.38.0]: https://github.com/biolab/orange3/compare/3.37.0...3.38.0
+[3.37.0]: https://github.com/biolab/orange3/compare/3.36.2...3.37.0
+[3.36.2]: https://github.com/biolab/orange3/compare/3.36.1...3.36.2
 [3.36.1]: https://github.com/biolab/orange3/compare/3.36.0...3.36.1
 [3.36.0]: https://github.com/biolab/orange3/compare/3.35.0...3.36.0
 [3.35.0]: https://github.com/biolab/orange3/compare/3.34.1...3.35.0

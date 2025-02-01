@@ -223,10 +223,12 @@ class TestOWPCA(WidgetTest):
         x = (x - x.mean(0)) / x.std(0)
         U, S, Va = np.linalg.svd(x)
         U, S, Va = U[:, :2], S[:2], Va[:2]
-        U, Va = svd_flip(U, Va)
-        pca_embedding = U * S
+        x_pca = U * S
 
-        np.testing.assert_almost_equal(widget_result.X, pca_embedding)
+        x_pca, _ = svd_flip(x_pca, None, u_based_decision=True)
+        x_widget, _ = svd_flip(widget_result.X.copy(), None, u_based_decision=True)
+
+        np.testing.assert_almost_equal(x_widget, x_pca)
 
     def test_do_not_mask_features(self):
         # the widget used to replace cached variables when creating the
