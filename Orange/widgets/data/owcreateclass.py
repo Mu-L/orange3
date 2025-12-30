@@ -14,7 +14,7 @@ from Orange.data.table import Table
 from Orange.statistics.util import bincount
 from Orange.preprocess.transformation import Transformation, Lookup
 from Orange.widgets import gui, widget
-from Orange.widgets.settings import DomainContextHandler, ContextSetting
+from Orange.widgets.settings import DomainContextHandler, ContextSetting, Setting
 from Orange.widgets.utils.itemmodels import DomainModel
 from Orange.widgets.utils.localization import pl
 from Orange.widgets.utils.widgetpreview import WidgetPreview
@@ -233,12 +233,14 @@ class OWCreateClass(widget.OWWidget):
     MAX_RULES_AREA_HEIGHT = 360
 
     settingsHandler = DomainContextHandler()
-    attribute = ContextSetting(None)
-    class_name = ContextSetting("class")
-    rules = ContextSetting({})
-    match_beginning = ContextSetting(False)
-    case_sensitive = ContextSetting(False)
-    regular_expressions = ContextSetting(False)
+    attribute = ContextSetting(None, schema_only=True)
+    class_name = Setting("class", schema_only=True)
+    rules = Setting({}, schema_only=True)
+    match_beginning = Setting(False, schema_only=True)
+    case_sensitive = Setting(False, schema_only=True)
+    regular_expressions = Setting(False, schema_only=True)
+
+    settings_version = 2
 
     TRANSFORMERS = {StringVariable: ValueFromStringSubstring,
                     DiscreteVariable: ValueFromDiscreteSubstring}
@@ -363,7 +365,6 @@ class OWCreateClass(widget.OWWidget):
     def set_data(self, data):
         """Input data signal handler."""
         self.closeContext()
-        self.rules = {}
         self.data = data
         model = self.controls.attribute.model()
         model.set_domain(data.domain if data is not None else None)
@@ -722,6 +723,18 @@ class OWCreateClass(widget.OWWidget):
         if output:
             self.report_items("Output", [("Class name", self.class_name)])
             self.report_raw(f"<ol>{output}</ol>")
+
+    @classmethod
+    def migrate_settings(cls, settings, version):
+        if version < 2:
+            contexts = settings.pop("context_settings", [])
+            if contexts:
+                print(contexts[0].values)
+                print(settings)
+                settings.update(
+                    {name: contexts[0].values[name][0]
+                     for name in ("class_name", "rules", "match_beginning",
+                                  "case_sensitive")})
 
 
 if __name__ == "__main__":  # pragma: no cover
