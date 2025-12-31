@@ -279,15 +279,15 @@ class OWCreateClass(widget.OWWidget):
         #    once the new row's height has been applied
         self._scroll_to_bottom_pending = False
 
-        gui.lineEdit(
+        le = gui.lineEdit(
             self.controlArea, self, "class_name",
             orientation=Qt.Horizontal, box="New Class Name")
+        le.setStyleSheet("QLineEdit { padding-left: 4px; }")
 
-        variable_select_box = gui.vBox(self.controlArea, "Match by Substring")
+        variable_select_box = gui.vBox(self.controlArea, box="Source column and patterns")
 
         combo = gui.comboBox(
-            variable_select_box, self, "attribute", label="From column:",
-            orientation=Qt.Horizontal, searchable=True,
+            variable_select_box, self, "attribute", searchable=True,
             callback=self.update_rules,
             model=DomainModel(valid_types=(StringVariable, DiscreteVariable)))
         # Don't use setSizePolicy keyword argument here: it applies to box,
@@ -344,6 +344,7 @@ class OWCreateClass(widget.OWWidget):
         gui.button(self.buttonsArea, self, "Apply", callback=self.apply)
 
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        self.update_dynamic_height(initial=True)
 
     @property
     def active_rules(self):
@@ -360,6 +361,12 @@ class OWCreateClass(widget.OWWidget):
         for editr, textr in zip(self.line_edits, self.active_rules):
             for edit, text in zip(editr, textr):
                 edit.setText(text)
+
+    def update_dynamic_height(self, initial=False):
+        self.updateGeometry()
+        current_width = 350 if initial else self.width()
+        target_height = self.layout().sizeHint().height()
+        self.resize(current_width, target_height)
 
     @Inputs.data
     def set_data(self, data):
