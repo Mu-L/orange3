@@ -82,11 +82,17 @@ base.py:
             euclidean: false
             uniform: false
             auto: false
+        def `_initialize_wrapped`:
+            metric: false
+            cosine: false
+            euclidean: false
         def `fit`:
             metric_params: false
             metric: false
             mahalanobis: false
             V: false
+            cosine: false
+            l2: false
     class `NNBase`:
         def `__init__`:
             relu: false
@@ -10267,14 +10273,6 @@ widgets/model/owgradientboosting.py:
     __main__: false
     iris: false
 widgets/model/owknn.py:
-    class `NormalizeInstancesL2`:
-        def `__call__`:
-            l2: null
-        def `__repr__`:
-            Normalize instances (L2): null
-    class `L2KNNLearner`:
-        classification: null
-        regression: null
     class `OWKNNLearner`:
         kNN: k sosedov
         Predict according to the nearest training instances.: Napoveduje glede na najbližje sosede iz učnih primerov.
@@ -10288,32 +10286,25 @@ widgets/model/owknn.py:
         manhattan: false
         chebyshev: false
         mahalanobis: false
+        cosine: false
         Uniform: Enake
         By Distances: Po razdalji
         Euclidean: Evklidska
         Manhattan: Manhattanska
         Chebyshev: Čebiševa
         Mahalanobis: Mahalanobisova
+        Cosine: Kosinusna
         def `add_main_layout`:
             Neighbors: Sosedi
             n_neighbors: false
             Number of neighbors:: Število sosedov:
             metric_index: false
             Metric:: Metrika:
-            normalize_instances_l2: null
-            Normalize instances (L2; cosine-equivalent): null
-            'Normalize each instance to unit L2 norm before learning. ': null
-            Recommended for embeddings when using Euclidean distance.: null
             weight_index: false
             Weight:: Uteži:
-        def `_update_l2_checkbox`:
-            euclidean: null
         def `get_learner_parameters`:
             Number of neighbours: Število sosedov
             Metric: Metrika
-            Normalize instances: null
-            L2: null
-            No: null
             Weight: Uteži
     __main__: false
     iris: false
