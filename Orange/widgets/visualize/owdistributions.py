@@ -365,7 +365,7 @@ class OWDistributions(OWWidget):
         ("Normal", norm, ("loc", "scale"), ("μ", "σ")),
         ("Beta", beta, ("a", "b", "loc", "scale"),
          ("α", "β", "-loc", "-scale")),
-        ("Gamma", gamma, ("a", "loc", "scale"), ("α", "β", "-loc", "-scale")),
+        ("Gamma", gamma, ("a", "loc", "scale"), ("α", "-loc", "θ")),
         ("Rayleigh", rayleigh, ("loc", "scale"), ("-loc", "σ")),
         ("Pareto", pareto, ("b", "loc", "scale"), ("α", "-loc", "-scale")),
         ("Exponential", expon, ("loc", "scale"), ("-loc", "λ")),

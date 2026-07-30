@@ -14138,6 +14138,7 @@ widgets/visualize/owdistributions.py:
         -loc: false
         -scale: false
         Gamma: Gama
+        θ: false
         Rayleigh: true
         Pareto: true
         Exponential: Eksponentna
