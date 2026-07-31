@@ -673,11 +673,11 @@ class TestOWCreateClass(WidgetTest):
     def test_migrate_settings_1_2(self):
         settings = {"__version__": 1, "context_settings": [Context(
             values= {
-                'attribute': ('type', 101),
+                'attribute': ('eggs', 101),  # not a default selection
                 'case_sensitive': (True, -2),
-                'class_name': ('class', -2),
+                'class_name': ('myclass', -2),
                 'match_beginning': (True, -2),
-                'regular_expressions': (False, -2),
+                'regular_expressions': (True, -2),
                 'rules': ({'type': [['cam', 'am'], ['cer', 'er'], ['', '']],
                            'eggs': [['de', 'e1'], ['', '']]},
                           -2),
@@ -686,14 +686,15 @@ class TestOWCreateClass(WidgetTest):
             metas = {'name': 3})]}
         w = self.create_widget(OWCreateClass, stored_settings=settings)
         self.send_signal(w.Inputs.data, self.zoo, widget=w)
-        self.assertEqual(w.active_rules, [['cam', 'am'], ['cer', 'er'], ['', '']])
-        self.assertEqual(w.class_name, "class")
+        self.assertEqual(w.attribute, self.zoo.domain["eggs"])
+        self.assertEqual(w.active_rules, [['de', 'e1'], ['', '']])
+        self.assertEqual(w.class_name, "myclass")
         self.assertTrue(w.case_sensitive)
         self.assertTrue(w.match_beginning)
-        self.assertFalse(w.regular_expressions)
+        self.assertTrue(w.regular_expressions)
 
-        w.attribute = self.zoo.domain["eggs"]
-        self.assertEqual(w.active_rules, [['de', 'e1'], ['', '']])
+        w.attribute = self.zoo.domain["type"]
+        self.assertEqual(w.active_rules, [['cam', 'am'], ['cer', 'er'], ['', '']])
 
 
 

@@ -736,12 +736,13 @@ class OWCreateClass(widget.OWWidget):
         if version < 2:
             contexts = settings.pop("context_settings", [])
             if contexts:
-                print(contexts[0].values)
-                print(settings)
+                context = contexts[0]
                 settings.update(
-                    {name: contexts[0].values[name][0]
+                    {name: context.values.pop(name)[0]
                      for name in ("class_name", "rules", "match_beginning",
-                                  "case_sensitive")})
+                                  "case_sensitive", "regular_expressions")})
+                context.values["__version__"] = 2
+                settings["context_settings"] = [context]  # selected attribute
 
 
 if __name__ == "__main__":  # pragma: no cover

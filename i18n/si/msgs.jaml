@@ -4940,6 +4940,8 @@ widgets/data/owcreateclass.py:
             rules: false
             match_beginning: false
             case_sensitive: false
+            regular_expressions: false
+            __version__: false
     __main__: false
     zoo: false
 widgets/data/owcreateinstance.py:
