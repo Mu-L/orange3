@@ -5,7 +5,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-from AnyQt.QtWidgets import QFrame, QGridLayout, QLabel, QLineEdit, \
+from AnyQt.QtWidgets import QLayout, QFrame, QGridLayout, QLabel, QLineEdit, \
     QSizePolicy, QWidget, QScrollArea
 from AnyQt.QtCore import Qt, QTimer
 
@@ -295,11 +295,12 @@ class OWCreateClass(widget.OWWidget):
         combo.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Preferred)
 
         patternbox = gui.vBox(variable_select_box)
+        patternbox.layout().setSpacing(0)
         #: QWidget: the box that contains the remove buttons, line edits and
         #    count labels. The lines are added and removed dynamically.
         self.rules_box = rules_box = QGridLayout()
         rules_box.setSpacing(4)
-        rules_box.setContentsMargins(4, 4, 4, 4)
+        rules_box.setContentsMargins(4, 4, 4, 0)
         self.rules_box.setColumnMinimumWidth(1, 70)
         self.rules_box.setColumnMinimumWidth(0, 10)
         self.rules_box.setColumnStretch(0, 1)
@@ -344,7 +345,7 @@ class OWCreateClass(widget.OWWidget):
         gui.button(self.buttonsArea, self, "Apply", callback=self.apply)
 
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        self.update_dynamic_height(initial=True)
+        self.layout().setSizeConstraint(QLayout.SetFixedSize)
 
     @property
     def active_rules(self):
@@ -361,12 +362,6 @@ class OWCreateClass(widget.OWWidget):
         for editr, textr in zip(self.line_edits, self.active_rules):
             for edit, text in zip(editr, textr):
                 edit.setText(text)
-
-    def update_dynamic_height(self, initial=False):
-        self.updateGeometry()
-        current_width = 350 if initial else self.width()
-        target_height = self.layout().sizeHint().height()
-        self.resize(current_width, target_height)
 
     @Inputs.data
     def set_data(self, data):
